@@ -61,6 +61,8 @@ func GetLnkTarget(lnk string) string {
 		des = strings.TrimSpace(des)
 
 		if des != "" {
+			//check slash
+			des = strings.Replace(des, "/", "\\", -1)
 			t, err = filepath.Abs(filepath.Join(filepath.Dir(lnk), des))
 			if err != nil {
 				s = fmt.Sprintf("%s error from GetDescription\n %v\n", s, err)

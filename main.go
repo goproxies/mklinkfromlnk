@@ -30,10 +30,11 @@ var (
 	printerror bool
 	printstack bool
 
-	skipre  *regexp.Regexp
-	bskip   bool
-	version = "1.0.0"
-	wait    sync.WaitGroup
+	checksymlink bool
+	skipre       *regexp.Regexp
+	bskip        bool
+	version      = "1.0.1"
+	wait         sync.WaitGroup
 )
 
 func init() {
@@ -50,6 +51,7 @@ func init() {
 	flag.BoolVar(&printerror, "printerror", false, "print errors")
 	flag.BoolVar(&printstack, "printstack", false, "print stack when some errors occured")
 	flag.Usage = usage
+	flag.BoolVar(&checksymlink, "checksymlink", false, "convert '/' to '\\' in symlink ")
 }
 func main() {
 	//catch errors
@@ -108,10 +110,36 @@ func main() {
 	}
 	paths_o := paths.ToStringSlice()
 	VPrintln("intial paths:", paths_o)
-	mklinkfrom(&paths_o)
+	if checksymlink {
+		checksymlinkfrom(&paths_o)
+	} else {
+		mklinkfrom(&paths_o)
+	}
+
 	wait.Wait()
 }
+func checksymlinkfrom(dirs *[]string) {
+	defer errors.CatchErrors(false, "checksymlinkfrom")
+	ct := make(chan *[]SymlinkFileInfo, c)
+	//deal with symlink files in the same directory first
+	for _, d := range *dirs {
+		lns := GetSymlinkFiles(d)
+		ct <- lns
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			defer errors.CoCatchErrors()
+			lns := <-ct
+			VPrintln("SYMLINKFILES:", *lns)
+			CheckSymlinkFiles(lns)
+		}()
 
+	}
+	//then the subdirs
+	for _, d := range *dirs {
+		checksymlinkfrom(GetSubdirsSymlink(d))
+	}
+}
 func mklinkfrom(dirs *[]string) {
 	defer errors.CatchErrors(false, "mklinkfrom")
 	ct := make(chan *[]string, c)
@@ -137,8 +165,10 @@ func mklinkfrom(dirs *[]string) {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `mklinkfromlnk version: %s
-Usage: mklinkfromlnk [-h] [-e] [-r] [-s] [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]] [-c maximum-numbers-of-coroutines] [-r use-relative-path] [-d directory] [directory...]  
-
+Usage: mklinkfromlnk [-h] [-e] [-r] [-s]  [-c maximum-numbers-of-coroutines] [-r use-relative-path]   
+    [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]]
+    [-checksymlink]
+    [-d directory] [directory...]
 Options:
 `, version)
 	flag.PrintDefaults()
@@ -245,6 +275,9 @@ func ShellOut(command ...string) (string, error) {
 	return stds, err
 }
 
+//-------------------------------------------------------------
+//create symlink
+
 // default sep `\r\n`
 // split with every sep
 func OutToSlice(o, prefix string, sep ...string) *[]string {
@@ -341,7 +374,6 @@ func CreateSymlinkFromLnk(lns *[]string) {
 			MakeSymlink(dir, ln, isfile, target)
 		}
 	}
-
 }
 
 func GetLnkInfo(lnk string) (isfile bool, target string) {
@@ -380,6 +412,95 @@ func MakeSymlink(dir, src string, isfile bool, target string) {
 		}
 	}
 }
+
+//-------------------------------------------------------------
+//-checksymlink
+func GetSubdirsSymlink(parent string) *[]string {
+	dirs := make([]string, 0)
+	if !strings.HasSuffix(parent, `\`) {
+		parent = parent + `\`
+	}
+	t, err := ShellOut("DIR", parent, "/A:-LD", "/B")
+	if err == nil {
+		dirs = *OutToSlice(t, parent)
+	}
+	VPrintln("SUBDIRS:", dirs)
+	if bskip {
+		s := NewHashSet()
+		for _, d := range dirs {
+			if !skipre.MatchString(d) {
+				VPrintf("match dir:%s\n", d)
+				s.Add(d)
+			} else {
+				VPrintf("skip dir:%s\n", d)
+			}
+		}
+		dirs = s.ToStringSlice()
+	}
+	return &dirs
+}
+func CheckSymlinkFiles(lns *[]SymlinkFileInfo) {
+	defer errors.CatchErrors(false, "GetSymlinkFiles")
+	if len((*lns)) == 0 {
+		return
+	}
+	for _, ln := range *lns {
+		target := ln.Target
+		if target != "" {
+			if strings.Contains(target, "/") {
+				VPrintln("TRANSFORM:", "->", target)
+				target = strings.Replace(target, "/", "\\", -1)
+				CheckSymlink(ln.Src, ln.Isfile, target)
+			}
+		}
+	}
+
+}
+func CheckSymlink(src string, isfile bool, target string) {
+	fmt.Printf("%s\n ->%s\n", src, target)
+	os.Remove(src)
+	if isfile {
+		ShellOut("mklink", src, target)
+	} else {
+		ShellOut("mklink", "/d", src, target)
+	}
+}
+
+type SymlinkFileInfo struct {
+	Isfile bool
+	Src    string
+	Target string
+}
+
+var symlink_line_re = regexp.MustCompile(`(?m:^.*<SYMLINK(?P<isDir>D?)>\s+\b(?P<src>.*)\b\s+\[(?P<target>[^\]]+)\].*$)`)
+
+func OutToSymlinkFileInfo(t, dir string) *[]SymlinkFileInfo {
+	defer errors.CatchErrors(false, "OutToSymlinkFileInfo")
+	sl := OutToSlice(t, "")
+	r := make([]SymlinkFileInfo, 0)
+	for _, k := range *sl {
+		if strings.Contains(k, "[") {
+			m := symlink_line_re.FindStringSubmatch(k)
+			r = append(r, SymlinkFileInfo{m[1] != "D", dir + m[2], m[3]})
+		}
+	}
+	return &r
+}
+func GetSymlinkFiles(dir string) *[]SymlinkFileInfo {
+	SPrintln("PARSING:", dir)
+	files := make([]SymlinkFileInfo, 0)
+	if !strings.HasSuffix(dir, `\`) {
+		dir = dir + `\`
+	}
+
+	t, _ := ShellOut("DIR", dir, "/A:L")
+	// in subdir ShellOut return err!=nil
+	files = *OutToSymlinkFileInfo(t, dir)
+	return &files
+}
+
+//-------------------------------------------------------------
+//assist functions
 func PathExists(path string) bool {
 	_, err := os.Lstat(path)
 	if err == nil {

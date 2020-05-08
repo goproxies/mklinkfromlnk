@@ -16,33 +16,38 @@ On msys2 when `tar` huge file `aosp-last.tar` to windows all `link files` were c
 - `go install -v -gcflags "-N -l" ./...`
 
 # Release
-- latest-release ![v1.0.0-amd64](https://github.com/goproxies/mklinkfromlnk/releases/download/v1.0.0-amd64/mklinkfromlnk.exe)
+- latest-release ![v1.0.1-amd64](https://github.com/goproxies/mklinkfromlnk/releases/download/v1.0.0-amd64/mklinkfromlnk.exe)
 
 # Usage:
 ```shell
-Usage: mklinkfromlnk [-h] [-e] [-r] [-s] [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]] [-c maximum-numbers-of-coroutines] [-r use-relative-path] [-d directory] [directory...]
-e-path] [-d directory...]
-
+mklinkfromlnk version: 1.0.1
+Usage: mklinkfromlnk [-h] [-e] [-r] [-s]  [-c maximum-numbers-of-coroutines] [-r use-relative-path]   
+    [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]]
+    [-checksymlink]
+    [-d directory] [directory...]
 Options:
   -c int
-        minimum 20,maximum numbers of coroutines  (default 50)
+    	minimum 20,maximum numbers of coroutines  (default 50)
+  -checksymlink
+    	convert '/' to '\' in symlink 
   -d string
-        which directory to search (default ".")
-  -e    delete *.lnk
-  -h    print help
+    	which directory to search (default ".")
+  -e	delete *.lnk
+  -h	print help
   -oledebug
-        show ole errors
+    	show ole errors
   -printerror
-        print errors
+    	print errors
   -printstack
-        print stack when some errors occured
-  -r    create with relative path
-  -s    show parsing dir
+    	print stack when some errors occured
+  -r	create with relative path
+  -s	show parsing dir
   -skip string
-        skip directory pattern
-  -v    show infos verbosely
+    	skip directory pattern
+  -v	show infos verbosely
   -vv
-        show infos more verbosely
+    	show infos more verbosely
+Entry
 ```
 # Example:
 
