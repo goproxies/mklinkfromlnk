@@ -16,18 +16,21 @@ On msys2 when `tar` huge file `aosp-last.tar` to windows all `link files` were c
 - `go install -v -gcflags "-N -l" ./...`
 
 # Release
-- latest-release ![v1.0.1-amd64](https://github.com/goproxies/mklinkfromlnk/releases/download/v1.0.0-amd64/mklinkfromlnk.exe)
+- latest-release ![v1.0.3-amd64](https://github.com/goproxies/mklinkfromlnk/releases/download/v1.0.0-amd64/mklinkfromlnk.exe)
 
 # Usage:
 ```shell
-mklinkfromlnk version: 1.0.1
+mklinkfromlnk version: 1.0.3
 Usage: mklinkfromlnk [-h] [-e] [-r] [-s]  [-c maximum-numbers-of-coroutines] [-r use-relative-path]   
     [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]]
     [-checksymlink]
+    [-checksame]
     [-d directory] [directory...]
 Options:
   -c int
     	minimum 20,maximum numbers of coroutines  (default 50)
+  -checksame 	
+    	correct target with the name of symlink
   -checksymlink
     	convert '/' to '\' in symlink 
   -d string

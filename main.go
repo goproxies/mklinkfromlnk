@@ -33,8 +33,9 @@ var (
 	checksymlink bool
 	skipre       *regexp.Regexp
 	bskip        bool
-	version      = "1.0.1"
+	version      = "1.0.3"
 	wait         sync.WaitGroup
+	checksame    bool
 )
 
 func init() {
@@ -45,20 +46,21 @@ func init() {
 	flag.BoolVar(&s, "s", false, "show parsing dir")
 	flag.BoolVar(&v, "v", false, "show infos verbosely")
 	flag.BoolVar(&vv, "vv", false, "show infos more verbosely")
-	flag.IntVar(&c, "c", 50, "minimum 20,maximum numbers of coroutines ")
+	flag.IntVar(&c, "c", 50, "minimum 1,maximum numbers of coroutines ")
 	flag.BoolVar(&e, "e", false, "delete *.lnk")
 	flag.BoolVar(&oledebug, "oledebug", false, "show ole errors")
 	flag.BoolVar(&printerror, "printerror", false, "print errors")
 	flag.BoolVar(&printstack, "printstack", false, "print stack when some errors occured")
 	flag.Usage = usage
 	flag.BoolVar(&checksymlink, "checksymlink", false, "convert '/' to '\\' in symlink ")
+	flag.BoolVar(&checksame, "checksame", false, "correct target with the name of symlink")
 }
 func main() {
 	//catch errors
 	defer errors.MainCatchErrors("mklinkfromlnk")
 	flag.Parse()
-	if c < 20 {
-		c = 20
+	if c < 1 {
+		c = 1
 	}
 	if flag.NFlag() == 0 || h {
 		flag.Usage()
@@ -112,11 +114,13 @@ func main() {
 	VPrintln("intial paths:", paths_o)
 	if checksymlink {
 		checksymlinkfrom(&paths_o)
+	} else if checksame {
+		checksamefrom(&paths_o)
 	} else {
 		mklinkfrom(&paths_o)
 	}
 
-	wait.Wait()
+	defer wait.Wait()
 }
 func checksymlinkfrom(dirs *[]string) {
 	defer errors.CatchErrors(false, "checksymlinkfrom")
@@ -124,8 +128,11 @@ func checksymlinkfrom(dirs *[]string) {
 	//deal with symlink files in the same directory first
 	for _, d := range *dirs {
 		lns := GetSymlinkFiles(d)
-		ct <- lns
+		if len(*lns) == 0 {
+			continue
+		}
 		wait.Add(1)
+		ct <- lns
 		go func() {
 			defer wait.Done()
 			defer errors.CoCatchErrors()
@@ -140,14 +147,42 @@ func checksymlinkfrom(dirs *[]string) {
 		checksymlinkfrom(GetSubdirsSymlink(d))
 	}
 }
+func checksamefrom(dirs *[]string) {
+	defer errors.CatchErrors(false, "checksamefrom")
+	ct := make(chan *[]SymlinkFileInfo, c)
+	//deal with symlink files in the same directory first
+	for _, d := range *dirs {
+		lns := GetSymlinkFiles(d)
+		if len(*lns) == 0 {
+			continue
+		}
+		wait.Add(1)
+		ct <- lns
+		go func() {
+			defer wait.Done()
+			defer errors.CoCatchErrors()
+			lns := <-ct
+			VPrintln("SYMLINKFILES:", *lns)
+			CheckSameSymlinkFiles(lns)
+		}()
+
+	}
+	//then the subdirs
+	for _, d := range *dirs {
+		checksamefrom(GetSubdirsSymlink(d))
+	}
+}
 func mklinkfrom(dirs *[]string) {
 	defer errors.CatchErrors(false, "mklinkfrom")
 	ct := make(chan *[]string, c)
 	//deal with link files in the same directory first
 	for _, d := range *dirs {
 		lns := GetLnkFiles(d)
-		ct <- lns
+		if len(*lns) == 0 {
+			continue
+		}
 		wait.Add(1)
+		ct <- lns
 		go func() {
 			defer wait.Done()
 			defer errors.CoCatchErrors()
@@ -168,6 +203,7 @@ func usage() {
 Usage: mklinkfromlnk [-h] [-e] [-r] [-s]  [-c maximum-numbers-of-coroutines] [-r use-relative-path]   
     [-printerror] [-printstack [-printerror]] [-v [-s -printerror]] [-oledebug [-printstack -printerror]] [-vv [-v -printstack -oledebug]]
     [-checksymlink]
+    [-checksame]
     [-d directory] [directory...]
 Options:
 `, version)
@@ -268,6 +304,25 @@ func ShellOut(command ...string) (string, error) {
 	if v {
 		con := errors.GetGID()
 		VPrintln(fmt.Sprintf(" [co %d][ShellOut] execute cmd:%s %s\n", con, cmd.Path, makeCmdLine(cmd.Args)),
+			fmt.Sprintf("[co %d][ShellOut] stdout:%s\n", con, stds),
+			fmt.Sprintf("[co %d][ShellOut] error:%v\n", con, err),
+			fmt.Sprintf("[co %d][ShellOut] stderr:%s\n", con, dll.CovConsoleBytesToString(stderr.Bytes())))
+	}
+	return stds, err
+}
+func SShellOut(command ...string) (string, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmdswitch := []string{"/C"}
+	cmd := exec.Command("CMD", append(cmdswitch, command...)...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	stds := dll.CovConsoleBytesToString(stdout.Bytes())
+	if s {
+		con := errors.GetGID()
+		SPrintln(fmt.Sprintf(" [co %d][ShellOut] execute cmd:%s %s\n", con, cmd.Path, makeCmdLine(cmd.Args)),
 			fmt.Sprintf("[co %d][ShellOut] stdout:%s\n", con, stds),
 			fmt.Sprintf("[co %d][ShellOut] error:%v\n", con, err),
 			fmt.Sprintf("[co %d][ShellOut] stderr:%s\n", con, dll.CovConsoleBytesToString(stderr.Bytes())))
@@ -399,6 +454,16 @@ func MakeSymlink(dir, src string, isfile bool, target string) {
 	ru := []rune(src)
 	src_path := string(ru[:len(ru)-4])
 	fmt.Printf("%s\n ->%s\n", src_path, target)
+	//delete non-symlink file/dir first
+	if PathExists(src_path) {
+		if !isSymlink(src_path) {
+			DeleteAllFiles(src_path, isfile)
+			if !isfile {
+				os.Remove(src_path)
+			}
+			SPrintf("Delete:%s\n", src_path)
+		}
+	}
 	if isfile {
 		ShellOut("mklink", src_path, target)
 	} else {
@@ -411,6 +476,16 @@ func MakeSymlink(dir, src string, isfile bool, target string) {
 			os.Remove(src)
 		}
 	}
+}
+func isSymlink(d string) bool {
+	l, _ := os.Lstat(d)
+
+	return l.Mode()&os.ModeSymlink != 0
+
+	//return false
+}
+func DeleteAllFiles(d string, isfile bool) {
+	SShellOut("del", "/F", "/S", "/Q", d)
 }
 
 //-------------------------------------------------------------
@@ -500,7 +575,39 @@ func GetSymlinkFiles(dir string) *[]SymlinkFileInfo {
 }
 
 //-------------------------------------------------------------
+//-checksame
+
+func CheckSameSymlinkFiles(lns *[]SymlinkFileInfo) {
+	defer errors.CatchErrors(false, "CheckSameSymlinkFiles")
+	if len((*lns)) == 0 {
+		return
+	}
+	for _, ln := range *lns {
+		target := ln.Target
+		base_src := filepath.Base(ln.Src)
+		base_target := filepath.Base(target)
+		if base_src != base_target {
+			VPrintln("CHECKSAME:", "->", target)
+			target = target[:len(target)-len(base_target)] + base_src
+			CheckSameSymlink(ln.Src, ln.Isfile, target)
+		}
+	}
+
+}
+
+func CheckSameSymlink(src string, isfile bool, target string) {
+	fmt.Printf("%s\n ->%s\n", src, target)
+	os.Remove(src)
+	if isfile {
+		ShellOut("mklink", src, target)
+	} else {
+		ShellOut("mklink", "/d", src, target)
+	}
+}
+
+//-------------------------------------------------------------
 //assist functions
+
 func PathExists(path string) bool {
 	_, err := os.Lstat(path)
 	if err == nil {
